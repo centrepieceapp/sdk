@@ -1,0 +1,306 @@
+/// The contract between Centrepiece and an extension.
+///
+/// An extension owns one prefix. It never draws anything itself: Centrepiece
+/// asks it questions through the `extension` interface ("you were opened", "the
+/// query changed", "this row was picked") and it answers with a `response` —
+/// usually a `screen` of rows for Centrepiece to render. Everything an
+/// extension can do to the outside world goes through `host`, and each
+/// capability there is granted by the `[permissions]` table of the extension's
+/// manifest.
+///
+/// Files are the exception: an extension reads the folders `permissions.read`
+/// lists with its language's own file functions, at the same paths as on the
+/// Mac, and finds the home folder in `HOME`.
+///
+/// Slow work never blocks a call. `fetch`, `exec` and the secret functions
+/// return a `task-id` straight away; the result arrives later in
+/// `extension.task-finished`, which answers with a response like any other
+/// call.
+package centrepiece:extension@0.6.0;
+
+interface types {
+    /// The picture drawn at the left of a row.
+    variant icon {
+        none,
+        /// One of Centrepiece's own icons, by name: `refresh`, `link`,
+        /// `settings`…
+        builtin(string),
+        /// An SVG shipped in the extension's `assets/` folder, by file name. It
+        /// is drawn in a single colour, tinted with the theme.
+        asset(string),
+        /// A character — an emoji, or a letter — drawn in a rounded tile. Only
+        /// the first character is used.
+        glyph(string),
+        /// The system icon for a file or application bundle. An image file —
+        /// PNG, JPEG, HEIC… — is drawn as the picture itself instead, cropped
+        /// to a circle: a profile picture, say.
+        file(string),
+        /// A swatch of one color, as `0xRRGGBBAA`.
+        color(u32),
+    }
+
+    /// One row of the list.
+    record item {
+        /// Handed back to `extension.select`; unique within a screen.
+        id: string,
+        title: string,
+        subtitle: option<string>,
+        /// Right-aligned hint.
+        detail: option<string>,
+        icon: icon,
+        /// The colour a `builtin` or `asset` icon is drawn in, as
+        /// `0xRRGGBBAA`, in place of the theme's; ignored for other icons.
+        tint: option<u32>,
+        /// On a menu screen, the key that picks this row outright. Only the
+        /// first character is used.
+        key: option<string>,
+    }
+
+    /// How Centrepiece treats typing while a screen is up.
+    variant mode {
+        /// Every keystroke is a query.
+        search,
+        /// The list is fixed; keys on the rows pick them directly.
+        menu,
+        /// The input collects one value, submitted with Enter. The flag masks
+        /// what is typed, for secrets.
+        prompt(bool),
+    }
+
+    /// Who narrows a search screen down to the query.
+    enum filter {
+        /// The extension: every keystroke calls `extension.search`.
+        extension,
+        /// Centrepiece: it fuzzy-matches the rows' titles and subtitles, ranks
+        /// the ones picked most often first, and `extension.search` is not
+        /// called while the screen is up. Right for any fixed list.
+        host,
+    }
+
+    record screen {
+        mode: mode,
+        filter: filter,
+        /// Breadcrumb shown beside the prefix badge.
+        title: option<string>,
+        placeholder: option<string>,
+        items: list<item>,
+        /// Shown in place of the list when `items` is empty.
+        status: option<string>,
+        /// Draws the progress hairline.
+        loading: bool,
+    }
+
+    /// A screen opened on top, with the query replaced.
+    record entered {
+        screen: screen,
+        query: string,
+    }
+
+    /// An extension's answer to anything Centrepiece asks it.
+    variant response {
+        /// Leave the screen as it is.
+        none,
+        /// Redraw the current screen.
+        replace(screen),
+        /// Open a screen on top; Backspace on an empty query comes back.
+        push(screen),
+        /// `push`, and replace the query — for a word typed at the extension's
+        /// root that names a screen of its own.
+        enter(entered),
+        /// `replace`, and clear the query.
+        reset(screen),
+        /// Go back one screen, leaving the extension if it was the last one.
+        pop,
+        /// Close Centrepiece.
+        dismiss,
+        /// Report a problem without disturbing the screen.
+        error(string),
+    }
+
+    /// Names a piece of work started through `host`; its result is delivered
+    /// to `extension.task-finished` with the same id.
+    type task-id = u64;
+
+    record header {
+        name: string,
+        value: string,
+    }
+
+    enum method { get, post, put, patch, delete, head }
+
+    record http-request {
+        method: method,
+        url: string,
+        headers: list<header>,
+        body: option<list<u8>>,
+    }
+
+    /// Any response the server sent, whatever its status. Only a request that
+    /// never got an answer — refused by the manifest, unreachable, timed out —
+    /// is an error.
+    record http-response {
+        status: u16,
+        headers: list<header>,
+        body: list<u8>,
+    }
+
+    /// What a program run with `host.exec` printed, and how it ended.
+    record output {
+        /// The exit code; `none` when a signal ended the program.
+        status: option<s32>,
+        stdout: list<u8>,
+        stderr: list<u8>,
+    }
+
+    variant task-result {
+        http(result<http-response, string>),
+        /// A program run to the end, whatever its exit code. Only one that
+        /// could not be started — refused by the manifest, or not there — is
+        /// an error.
+        output(result<output, string>),
+        /// A secret read back; `none` when nothing is stored under the key, or
+        /// the user dismissed the keychain's dialog.
+        secret(result<option<list<u8>>, string>),
+        /// A secret stored or forgotten.
+        done(result<_, string>),
+    }
+
+    /// The native session operations an extension may request.
+    enum system-action { lock, sleep, screen-saver }
+
+    /// An application, as macOS knows it.
+    record app {
+        name: string,
+        pid: s32,
+    }
+
+    /// Something to rank with `host.rank`.
+    record candidate {
+        /// What `host.record-pick` was called with when this was picked.
+        key: string,
+        /// The strings the query is matched against, best first.
+        fields: list<string>,
+    }
+}
+
+interface host {
+    use types.{item, task-id, http-request, candidate, app, system-action};
+
+    enum level { error, warn, info, debug, trace }
+
+    /// Writes to Centrepiece's log, under the extension's name.
+    log: func(level: level, message: string);
+
+    /// The extension's `settings` from `centrepiece.yml`, as JSON; `null` when
+    /// there are none.
+    settings: func() -> string;
+
+    /// Rows offered at the root without typing the prefix. They appear when a
+    /// word of their title starts with what was typed; picking one calls
+    /// `extension.select` with its id. Kept until replaced.
+    set-shortcuts: func(items: list<item>);
+
+    /// Rows put first at the empty root — something the extension knows the
+    /// user is likely to want right now. Kept until replaced.
+    set-offers: func(items: list<item>);
+
+    /// Orders `candidates` by how well they match `query`, weighted by how
+    /// often each was picked, and drops those that do not match at all. An
+    /// empty query keeps them all, favorites first. Returns indices into
+    /// `candidates`.
+    rank: func(query: string, candidates: list<candidate>) -> list<u32>;
+
+    /// Notes that the user picked `key`, so `rank` floats it next time.
+    record-pick: func(key: string);
+
+    /// Requires `permissions.network` to list the URL's host.
+    fetch: func(request: http-request) -> task-id;
+
+    /// Secrets live in the macOS keychain, apart from every other extension's.
+    /// Requires `permissions.secrets`.
+    read-secret: func(key: string) -> task-id;
+    store-secret: func(key: string, value: list<u8>) -> task-id;
+    forget-secret: func(key: string) -> task-id;
+
+    /// Requires `permissions.clipboard`.
+    copy: func(text: string);
+
+    /// The text that was on the clipboard when Centrepiece was last
+    /// summoned; `none` when it held something else, or something an
+    /// application marked private. Requires `permissions.read-clipboard`.
+    clipboard-text: func() -> option<string>;
+
+    /// The application that was in front when Centrepiece was last
+    /// summoned — the one the user was working in. `none` when there was
+    /// none. Requires `permissions.front-app`.
+    front-app: func() -> option<app>;
+
+    /// Requests a native session operation. Requires
+    /// `permissions.system-actions`. Success means the request was dispatched,
+    /// not that the OS completed it.
+    perform-system-action: func(action: system-action) -> result<_, string>;
+
+    /// Opens a URL in the default browser. Requires `permissions.open`.
+    open-url: func(url: string);
+
+    /// Opens a file, folder or application. Requires `permissions.open`.
+    open-path: func(path: string);
+
+    /// Starts `program` with `args`, and returns once it has started rather
+    /// than once it has finished; nothing is read from it or written to it.
+    /// `program` is a path — `~/` for the home folder — that
+    /// `permissions.run` lists.
+    run: func(program: string, args: list<string>) -> result<_, string>;
+
+    /// Runs `program` with `args` to the end, and delivers what it printed as
+    /// `task-result.output`. `program` is a path `permissions.run` lists,
+    /// the same as for `run`.
+    exec: func(program: string, args: list<string>) -> task-id;
+}
+
+/// What an extension implements. Mirrors the trait Centrepiece's built-in
+/// extensions implement.
+interface extension {
+    use types.{item, response, task-id, task-result};
+
+    /// Centrepiece started, or the extension was reloaded. Called once, before
+    /// anything else.
+    started: func();
+
+    /// Centrepiece was summoned. Called on every summon, entered or not.
+    summoned: func();
+
+    /// The user entered the extension. `search` follows straight away with the
+    /// query.
+    activate: func() -> response;
+
+    /// The query — the text after the prefix — changed.
+    search: func(query: string) -> response;
+
+    /// Something was typed at Centrepiece's root, where no prefix has been
+    /// entered. Answers rows to put first for it — for an extension that
+    /// recognises what was typed, such as a color; picking one calls
+    /// `select` with its id, the same as an offer. Called on every keystroke
+    /// at the root, so it has to be cheap, and most extensions answer nothing.
+    suggest: func(query: string) -> list<item>;
+
+    /// A row was picked, by Enter or by its key.
+    select: func(id: string) -> response;
+
+    /// A prompt screen was submitted.
+    submit: func(value: string) -> response;
+
+    /// Work started through `host` finished.
+    task-finished: func(task: task-id, outcome: task-result) -> response;
+
+    /// The user stepped back one screen and the previous one is showing.
+    popped: func();
+
+    /// Centrepiece closed.
+    dismissed: func();
+}
+
+world centrepiece-extension {
+    import host;
+    export extension;
+}

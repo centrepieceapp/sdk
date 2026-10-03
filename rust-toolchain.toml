@@ -1,0 +1,4 @@
+[toolchain]
+# Keep in step with the toolchain Centrepiece and the official extensions pin.
+channel = "1.95.0"
+targets = ["wasm32-wasip2"]

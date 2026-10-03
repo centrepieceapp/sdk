@@ -1,0 +1,43 @@
+# Builds and tests the SDK on every push. A `v*` tag is a release: the tag,
+# the crate's version and the WIT package's version have to agree, and a
+# GitHub release is made for it.
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+
+permissions:
+  contents: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the toolchain in rust-toolchain.toml
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - name: Versions agree
+        run: |
+          crate=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)
+          wit=$(sed -n 's/^package centrepiece:extension@\(.*\);/\1/p' wit/extension.wit)
+          echo "crate $crate, WIT $wit"
+          [ "$crate" = "$wit" ] || { echo "Cargo.toml says $crate, wit/extension.wit says $wit" >&2; exit 1; }
+          if [ "$GITHUB_REF_TYPE" = tag ] && [ "$GITHUB_REF_NAME" != "v$crate" ]; then
+            echo "tag $GITHUB_REF_NAME does not match version $crate" >&2
+            exit 1
+          fi
+      - name: Build for wasm32-wasip2
+        run: cargo build --target wasm32-wasip2
+      - name: Test
+        run: cargo test
+      - name: Docs
+        run: cargo doc --no-deps
+      - name: Release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes
