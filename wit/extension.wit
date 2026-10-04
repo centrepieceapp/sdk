@@ -51,8 +51,8 @@ interface types {
         /// The colour a `builtin` or `asset` icon is drawn in, as
         /// `0xRRGGBBAA`, in place of the theme's; ignored for other icons.
         tint: option<u32>,
-        /// On a menu screen, the key that picks this row outright. Only the
-        /// first character is used.
+        /// On a menu screen, the key that picks this row outright, with `cmd`.
+        /// Only the first character is used.
         key: option<string>,
     }
 
@@ -60,7 +60,9 @@ interface types {
     variant mode {
         /// Every keystroke is a query.
         search,
-        /// The list is fixed; keys on the rows pick them directly.
+        /// The list is fixed; `cmd` and the keys on the rows pick them
+        /// directly, and typing filters the rows — Centrepiece does that
+        /// itself, without calling `extension.search`.
         menu,
         /// The input collects one value, submitted with Enter. The flag masks
         /// what is typed, for secrets.

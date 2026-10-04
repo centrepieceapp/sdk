@@ -160,7 +160,8 @@ API. The shapes worth knowing:
 
 * **Screens.** `Screen::search` filters as you type; `host_filtered()` has
   Centrepiece do the filtering and ranking. `Screen::menu` is a fixed list
-  where each row's `key` picks it outright. `Screen::prompt` collects one
+  where `cmd` and each row's `key` pick it outright, and Centrepiece filters
+  the rows as the user types. `Screen::prompt` collects one
   value, optionally masked, and delivers it to `Extension::submit`.
 * **Responses.** `Replace` redraws, `Push` opens a screen that `backspace`
   comes back from, `Pop` goes back, `Dismiss` closes Centrepiece, and `Error`

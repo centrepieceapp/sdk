@@ -299,7 +299,7 @@ impl Item {
         self
     }
 
-    /// On a [`Screen::menu`], the key that picks this row outright.
+    /// On a [`Screen::menu`], the key that picks this row outright, with `cmd`.
     pub fn key(mut self, key: char) -> Self {
         self.key = Some(key.to_string());
         self
@@ -326,7 +326,8 @@ impl Screen {
         Self::new(Mode::Search, items)
     }
 
-    /// A fixed list of choices, each picked with its own key.
+    /// A fixed list of choices, each picked with `cmd` and its own key, and
+    /// filtered by Centrepiece as the user types.
     pub fn menu(title: impl Into<String>, items: Vec<Item>) -> Self {
         Self::new(Mode::Menu, items).title(title)
     }
